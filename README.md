@@ -19,7 +19,7 @@ No Rust required. Works on Apple Silicon and Intel Macs.
 Requires [Rust](https://rustup.rs):
 
 ```bash
-cargo install --git https://github.com/Rahularya01/wmc --tag v0.1.0
+cargo install --git https://github.com/Rahularya01/wmc --tag v0.3.0
 ```
 
 ---
