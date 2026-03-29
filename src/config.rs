@@ -3,6 +3,9 @@ use std::path::PathBuf;
 pub const MAX_CONTACTS: usize = 8;
 pub const MAX_FILES: usize = 10;
 
+/// File extensions that are WhatsApp internal files and should never be deleted.
+pub const IGNORED_EXTENSIONS: &[&str] = &["thumb"];
+
 pub const IMAGE_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif", "tiff", "tif",
 ];

@@ -2,29 +2,36 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::config::{AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS};
+use crate::config::{AUDIO_EXTENSIONS, IGNORED_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS};
 use crate::db;
 
 use super::types::{CategorySummary, MediaEntry, ScanReport};
 
-/// Maps a file path to its media category string, or `None` if not a known
-/// media extension.
-pub fn file_category(path: &Path) -> Option<&'static str> {
-    let ext = path.extension()?.to_str()?.to_lowercase();
+/// Maps a file path to its media category string.
+pub fn file_category(path: &Path) -> &'static str {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
     if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
-        Some("Images")
+        "Images"
     } else if VIDEO_EXTENSIONS.contains(&ext.as_str()) {
-        Some("Videos")
+        "Videos"
     } else if AUDIO_EXTENSIONS.contains(&ext.as_str()) {
-        Some("Audio")
+        "Audio"
     } else {
-        None
+        "Documents"
     }
 }
 
-/// Returns `true` when the path has a recognised media extension.
-pub fn is_media_file(path: &Path) -> bool {
-    file_category(path).is_some()
+fn is_ignored(path: &Path) -> bool {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+    IGNORED_EXTENSIONS.contains(&ext.as_str())
 }
 
 /// Recursively walks `dir` and appends every media file to `files`.
@@ -35,7 +42,7 @@ pub fn collect_files(dir: &Path, files: &mut Vec<MediaEntry>) -> io::Result<()> 
         let meta = entry.metadata()?;
         if meta.is_dir() {
             collect_files(&path, files)?;
-        } else if meta.is_file() && is_media_file(&path) {
+        } else if meta.is_file() && !is_ignored(&path) {
             files.push(MediaEntry {
                 path,
                 size: meta.len(),
@@ -74,22 +81,30 @@ pub fn scan_media(target: &Path) -> io::Result<ScanReport> {
         file_count: 0,
         total_size: 0,
     };
+    let mut documents = CategorySummary {
+        label: "Documents",
+        file_count: 0,
+        total_size: 0,
+    };
 
     for entry in &files {
         match file_category(&entry.path) {
-            Some("Images") => {
+            "Images" => {
                 images.file_count += 1;
                 images.total_size += entry.size;
             }
-            Some("Videos") => {
+            "Videos" => {
                 videos.file_count += 1;
                 videos.total_size += entry.size;
             }
-            Some("Audio") => {
+            "Audio" => {
                 audio.file_count += 1;
                 audio.total_size += entry.size;
             }
-            _ => {}
+            _ => {
+                documents.file_count += 1;
+                documents.total_size += entry.size;
+            }
         }
     }
 
@@ -98,7 +113,7 @@ pub fn scan_media(target: &Path) -> io::Result<ScanReport> {
     let contact_breakdown = db::get_contact_breakdown(target, &files).unwrap_or_default();
 
     Ok(ScanReport {
-        categories: [images, videos, audio],
+        categories: [images, videos, audio, documents],
         contact_breakdown,
         files,
         total_files,

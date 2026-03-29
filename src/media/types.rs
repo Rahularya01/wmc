@@ -27,8 +27,8 @@ pub struct ContactBreakdown {
 /// Full result of a media directory scan.
 #[derive(Clone)]
 pub struct ScanReport {
-    /// Always three entries: Images, Videos, Audio (in that order).
-    pub categories: [CategorySummary; 3],
+    /// Always four entries: Images, Videos, Audio, Documents (in that order).
+    pub categories: [CategorySummary; 4],
     pub contact_breakdown: Vec<ContactBreakdown>,
     /// All media files sorted by descending size.
     pub files: Vec<MediaEntry>,
