@@ -13,3 +13,4 @@ rust-version = "1.85"
 
 [dependencies]
 rusqlite = "0.32"
+tuirealm = { version = "3.3", default-features = false, features = ["crossterm"] }

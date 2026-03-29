@@ -26,9 +26,26 @@ cargo install --git https://github.com/Rahularya01/wmc --tag v0.1.0
 
 ## Commands
 
+### `wmc`
+
+Open the interactive terminal UI built with `tuirealm`. This is now the default when you run `wmc` with no subcommand.
+
+```bash
+wmc
+```
+
+Inside the UI you can:
+
+- review total usage by media type
+- inspect the heaviest contacts and largest files
+- preview a clean before deleting anything
+- rescan after WhatsApp downloads new media
+
+---
+
 ### `wmc analyze`
 
-See how much storage WhatsApp media is taking up — broken down by type.
+See how much storage WhatsApp media is taking up in a plain non-interactive report.
 
 ```bash
 wmc analyze
@@ -45,7 +62,7 @@ Scanning: ~/Library/Group Containers/.../Message/Media
   ──────────────────────────────────────
   Total       65 file(s)   436.60 MB
 
-Run `wmc clean` to free up this space.
+Run `wmc` for the interactive UI or `wmc clean` to free up this space.
 ```
 
 ---
