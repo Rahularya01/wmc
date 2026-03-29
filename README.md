@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="WMC Logo" width="150">
+</p>
+
 # wmc — WhatsApp Media Cleaner
 
 `wmc` is a macOS CLI tool that reclaims storage taken up by WhatsApp media. It deletes downloaded files, clears stale references from WhatsApp's database, and removes the local media cache — so WhatsApp shows "tap to re-download" instead of broken media.
