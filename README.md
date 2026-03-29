@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="WMC Logo" width="150">
+  <img src="assets/logo.png" alt="WMC Logo" width="300">
 </p>
 
 # wmc — WhatsApp Media Cleaner
@@ -95,10 +95,10 @@ wmc clean --dry-run
 
 ### Global options
 
-| Option | Description |
-|---|---|
+| Option         | Description                                         |
+| -------------- | --------------------------------------------------- |
 | `--path <DIR>` | Use a custom media directory instead of the default |
-| `-h, --help` | Show help |
+| `-h, --help`   | Show help                                           |
 
 ---
 
