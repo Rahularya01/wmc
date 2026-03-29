@@ -22,17 +22,31 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-const MEDIA_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif", "tiff", "tif", "mp4", "mov", "avi",
-    "mkv", "wmv", "flv", "3gp", "m4v", "webm", "mp3", "aac", "m4a", "ogg", "wav", "flac", "opus",
-    "amr",
+const IMAGE_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif", "tiff", "tif",
+];
+const VIDEO_EXTENSIONS: &[&str] = &[
+    "mp4", "mov", "avi", "mkv", "wmv", "flv", "3gp", "m4v", "webm",
+];
+const AUDIO_EXTENSIONS: &[&str] = &[
+    "mp3", "aac", "m4a", "ogg", "wav", "flac", "opus", "amr",
 ];
 
+fn file_category(path: &Path) -> Option<&'static str> {
+    let ext = path.extension()?.to_str()?.to_lowercase();
+    if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+        Some("Images")
+    } else if VIDEO_EXTENSIONS.contains(&ext.as_str()) {
+        Some("Videos")
+    } else if AUDIO_EXTENSIONS.contains(&ext.as_str()) {
+        Some("Audio")
+    } else {
+        None
+    }
+}
+
 fn is_media_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| MEDIA_EXTENSIONS.contains(&e.to_lowercase().as_str()))
-        .unwrap_or(false)
+    file_category(path).is_some()
 }
 
 fn collect_files(dir: &Path, files: &mut Vec<(PathBuf, u64)>) -> io::Result<()> {
@@ -82,68 +96,68 @@ fn remove_empty_dirs(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
+fn print_help() {
+    println!("wmc - WhatsApp Media Cleaner\n");
+    println!("USAGE:");
+    println!("  wmc <COMMAND> [OPTIONS]\n");
+    println!("COMMANDS:");
+    println!("  analyze          Show how much storage WhatsApp media is using");
+    println!("  clean            Delete WhatsApp media and free up storage");
+    println!("  clean --dry-run  Preview what would be deleted without deleting\n");
+    println!("OPTIONS:");
+    println!("  -y, --yes        Skip confirmation prompt (use with clean)");
+    println!("  --path <DIR>     Override the target media directory");
+    println!("  -h, --help       Show this help message");
+}
 
-    let mut dry_run = false;
-    let mut skip_confirm = false;
-    let mut target_path: Option<PathBuf> = None;
-    let mut i = 1;
-
-    while i < args.len() {
-        match args[i].as_str() {
-            "--dry-run" | "-n" => dry_run = true,
-            "--yes" | "-y" => skip_confirm = true,
-            "--path" => {
-                i += 1;
-                if i < args.len() {
-                    target_path = Some(PathBuf::from(&args[i]));
-                } else {
-                    eprintln!("Error: --path requires an argument");
-                    std::process::exit(1);
-                }
-            }
-            "--help" | "-h" => {
-                println!(
-                    "wmc - WhatsApp Media Cleaner\n"
-                );
-                println!("USAGE:");
-                println!("  wmc [OPTIONS]\n");
-                println!("OPTIONS:");
-                println!("  -n, --dry-run      Show what would be deleted without deleting");
-                println!("  -y, --yes          Skip confirmation prompt");
-                println!("  --path <DIR>       Override target directory");
-                println!("  -h, --help         Show this help message");
-                std::process::exit(0);
-            }
-            other => {
-                eprintln!("Unknown argument: {}", other);
-                std::process::exit(1);
-            }
-        }
-        i += 1;
-    }
-
-    let target = target_path.unwrap_or_else(default_media_path);
-
-    if !target.exists() {
-        eprintln!(
-            "Error: target directory does not exist: {}",
-            target.display()
-        );
-        std::process::exit(1);
-    }
-
-    println!("Scanning: {}", target.display());
+fn cmd_analyze(target: &Path) {
+    println!("Scanning: {}\n", target.display());
 
     let mut files: Vec<(PathBuf, u64)> = Vec::new();
-    if let Err(e) = collect_files(&target, &mut files) {
+    if let Err(e) = collect_files(target, &mut files) {
         eprintln!("Error scanning directory: {}", e);
         std::process::exit(1);
     }
 
     if files.is_empty() {
-        println!("No files found. Nothing to do.");
+        println!("No media files found.");
+        return;
+    }
+
+    let mut images = (0usize, 0u64);
+    let mut videos = (0usize, 0u64);
+    let mut audio  = (0usize, 0u64);
+
+    for (path, size) in &files {
+        match file_category(path) {
+            Some("Images") => { images.0 += 1; images.1 += size; }
+            Some("Videos") => { videos.0 += 1; videos.1 += size; }
+            Some("Audio")  => { audio.0  += 1; audio.1  += size; }
+            _ => {}
+        }
+    }
+
+    let total_size: u64 = files.iter().map(|(_, s)| s).sum();
+
+    println!("  Images  {:>6} file(s)   {}", images.0, format_bytes(images.1));
+    println!("  Videos  {:>6} file(s)   {}", videos.0, format_bytes(videos.1));
+    println!("  Audio   {:>6} file(s)   {}", audio.0,  format_bytes(audio.1));
+    println!("  {}", "-".repeat(38));
+    println!("  Total   {:>6} file(s)   {}", files.len(), format_bytes(total_size));
+    println!("\nRun `wmc clean` to free up this space.");
+}
+
+fn cmd_clean(target: &Path, skip_confirm: bool, dry_run: bool) {
+    println!("Scanning: {}", target.display());
+
+    let mut files: Vec<(PathBuf, u64)> = Vec::new();
+    if let Err(e) = collect_files(target, &mut files) {
+        eprintln!("Error scanning directory: {}", e);
+        std::process::exit(1);
+    }
+
+    if files.is_empty() {
+        println!("No media files found. Nothing to do.");
         return;
     }
 
@@ -178,11 +192,7 @@ fn main() {
         }
     }
 
-    // Open WhatsApp database so we can clear local path references, which
-    // lets WhatsApp show "tap to re-download" instead of "corrupted".
-    // Open WhatsApp database so we can clear local path references, which
-    // lets WhatsApp show "tap to re-download" instead of "corrupted".
-    let conn: Option<Connection> = match get_db_path(&target) {
+    let conn: Option<Connection> = match get_db_path(target) {
         Some(db_path) if db_path.exists() => match Connection::open(&db_path) {
             Ok(c) => match c.execute_batch("BEGIN") {
                 Ok(_) => Some(c),
@@ -232,7 +242,7 @@ fn main() {
         }
 
         for (path, _) in &files {
-            if let Some(rel) = relative_db_path(&target, path) {
+            if let Some(rel) = relative_db_path(target, path) {
                 let _ = c.execute(
                     "UPDATE ZWAMEDIAITEM SET ZMEDIALOCALPATH = NULL WHERE ZMEDIALOCALPATH = ?1",
                     params![rel],
@@ -257,7 +267,7 @@ fn main() {
         }
     }
 
-    if let Err(e) = remove_empty_dirs(&target) {
+    if let Err(e) = remove_empty_dirs(target) {
         eprintln!("Warning: error removing empty directories: {}", e);
     }
 
@@ -301,5 +311,57 @@ fn restart_whatsapp() {
     {
         Ok(s) if s.success() => println!(" done."),
         _ => println!("\nCould not relaunch WhatsApp automatically — please open it manually."),
+    }
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+
+    let mut subcommand: Option<String> = None;
+    let mut dry_run = false;
+    let mut skip_confirm = false;
+    let mut target_path: Option<PathBuf> = None;
+    let mut i = 1;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "analyze" | "clean" => subcommand = Some(args[i].clone()),
+            "--dry-run" | "-n" => dry_run = true,
+            "--yes" | "-y" => skip_confirm = true,
+            "--path" => {
+                i += 1;
+                if i < args.len() {
+                    target_path = Some(PathBuf::from(&args[i]));
+                } else {
+                    eprintln!("Error: --path requires an argument");
+                    std::process::exit(1);
+                }
+            }
+            "--help" | "-h" => {
+                print_help();
+                std::process::exit(0);
+            }
+            other => {
+                eprintln!("Unknown argument: {}\nRun `wmc --help` for usage.", other);
+                std::process::exit(1);
+            }
+        }
+        i += 1;
+    }
+
+    let target = target_path.unwrap_or_else(default_media_path);
+
+    if !target.exists() {
+        eprintln!(
+            "Error: target directory does not exist: {}",
+            target.display()
+        );
+        std::process::exit(1);
+    }
+
+    match subcommand.as_deref() {
+        Some("analyze") => cmd_analyze(&target),
+        Some("clean") | None => cmd_clean(&target, skip_confirm, dry_run),
+        _ => unreachable!(),
     }
 }

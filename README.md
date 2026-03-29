@@ -1,8 +1,8 @@
-# wmc
+# wmc — WhatsApp Media Cleaner
 
-`wmc` stands for WhatsApp Media Cleaner. It is a small Rust CLI for cleaning downloaded WhatsApp media on macOS.
+`wmc` is a macOS CLI tool that reclaims storage taken up by WhatsApp media. It deletes downloaded files, clears stale references from WhatsApp's database, and removes the local media cache — so WhatsApp shows "tap to re-download" instead of broken media.
 
-It scans the local WhatsApp media directory, deletes media files, clears stale media paths in the local WhatsApp SQLite database, and removes the local media cache so WhatsApp can re-download files when needed.
+---
 
 ## Install
 
@@ -12,23 +12,82 @@ It scans the local WhatsApp media directory, deletes media files, clears stale m
 brew install Rahularya01/tap/wmc
 ```
 
-This installs a pre-built binary — no Rust required.
+No Rust required. Works on Apple Silicon and Intel Macs.
 
 ### From source
 
-Requires Rust (`cargo`):
+Requires [Rust](https://rustup.rs):
 
 ```bash
 cargo install --git https://github.com/Rahularya01/wmc --tag v0.1.0
 ```
 
-## Usage
+---
+
+## Commands
+
+### `wmc analyze`
+
+See how much storage WhatsApp media is taking up — broken down by type.
 
 ```bash
-wmc --dry-run
-wmc --yes
-wmc --path ~/Library/Group\ Containers/group.net.whatsapp.WhatsApp.shared/Message/Media
+wmc analyze
 ```
+
+Example output:
+
+```
+Scanning: ~/Library/Group Containers/.../Message/Media
+
+  Images      42 file(s)   18.30 MB
+  Videos       8 file(s)   412.10 MB
+  Audio       15 file(s)   6.20 MB
+  ──────────────────────────────────────
+  Total       65 file(s)   436.60 MB
+
+Run `wmc clean` to free up this space.
+```
+
+---
+
+### `wmc clean`
+
+Delete all WhatsApp media files. You'll be asked to confirm before anything is deleted.
+
+```bash
+wmc clean
+```
+
+Skip the confirmation prompt:
+
+```bash
+wmc clean --yes
+```
+
+Preview what would be deleted without actually deleting anything:
+
+```bash
+wmc clean --dry-run
+```
+
+---
+
+### Global options
+
+| Option | Description |
+|---|---|
+| `--path <DIR>` | Use a custom media directory instead of the default |
+| `-h, --help` | Show help |
+
+---
+
+## Notes
+
+- **Close WhatsApp before running `wmc clean`** — if WhatsApp is open, the database may be locked and deleted files could appear as corrupted instead of re-downloadable.
+- After cleaning, `wmc` will restart WhatsApp automatically if it was able to update the database.
+- This tool is macOS-only — it relies on WhatsApp Desktop's container paths and macOS system commands.
+
+---
 
 ## Release Flow
 
@@ -39,8 +98,3 @@ wmc --path ~/Library/Group\ Containers/group.net.whatsapp.WhatsApp.shared/Messag
    git tag v0.x.0 && git push origin v0.x.0
    ```
 4. GitHub Actions builds the macOS binaries, creates the release, and updates the Homebrew formula automatically.
-
-## Notes
-
-- This tool is macOS-specific because it relies on WhatsApp Desktop container paths and uses `open` and `pkill`.
-- If WhatsApp is open, database access may fail. Closing WhatsApp before running the tool gives the best results.

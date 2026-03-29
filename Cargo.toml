@@ -1,6 +1,6 @@
 [package]
 name = "wmc"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "CLI to clean downloaded WhatsApp media on macOS and repair local WhatsApp media references"
 license = "MIT"
