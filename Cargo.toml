@@ -1,0 +1,15 @@
+[package]
+name = "wmc"
+version = "0.1.0"
+edition = "2024"
+description = "CLI to clean downloaded WhatsApp media on macOS and repair local WhatsApp media references"
+license = "MIT"
+repository = "https://github.com/Rahularya01/wmc"
+homepage = "https://github.com/Rahularya01/wmc"
+readme = "README.md"
+keywords = ["cli", "whatsapp", "cleanup", "media", "macos"]
+categories = ["command-line-utilities", "filesystem"]
+rust-version = "1.85"
+
+[dependencies]
+rusqlite = "0.32"
