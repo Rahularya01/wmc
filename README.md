@@ -6,24 +6,20 @@ It scans the local WhatsApp media directory, deletes media files, clears stale m
 
 ## Install
 
-### From source
+### With Homebrew (recommended)
 
 ```bash
-cargo install --path .
+brew install Rahularya01/tap/wmc
 ```
 
-### From a Git tag
+This installs a pre-built binary — no Rust required.
+
+### From source
+
+Requires Rust (`cargo`):
 
 ```bash
 cargo install --git https://github.com/Rahularya01/wmc --tag v0.1.0
-```
-
-### With Homebrew
-
-After you publish a tap:
-
-```bash
-brew install rahularya/tap/wmc
 ```
 
 ## Usage
@@ -37,14 +33,12 @@ wmc --path ~/Library/Group\ Containers/group.net.whatsapp.WhatsApp.shared/Messag
 ## Release Flow
 
 1. Bump `version` in `Cargo.toml`.
-2. Commit and tag the release, for example `v0.1.0`.
-3. Push the commit and tag to GitHub.
-4. Create a GitHub release for that tag.
-5. Update the Homebrew formula in your tap with the new tarball SHA256.
-
-## Homebrew Formula
-
-A formula template is included at `packaging/homebrew/wmc.rb`.
+2. Commit and push to `main`.
+3. Tag and push the release:
+   ```bash
+   git tag v0.x.0 && git push origin v0.x.0
+   ```
+4. GitHub Actions builds the macOS binaries, creates the release, and updates the Homebrew formula automatically.
 
 ## Notes
 
