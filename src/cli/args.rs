@@ -21,6 +21,9 @@ pub struct CliArgs {
 impl CliArgs {
     /// Parses `std::env::args()` and exits the process with an error message on
     /// invalid input.
+    ///
+    /// Flags (`--dry-run`, `--yes`, `--path`) may appear in any order relative
+    /// to the subcommand keyword.
     pub fn parse() -> Self {
         let args: Vec<String> = std::env::args().collect();
 
@@ -35,7 +38,7 @@ impl CliArgs {
                 "ui" | "analyze" | "clean" => subcommand = Some(args[i].clone()),
                 "--dry-run" | "-n" => dry_run = true,
                 "--yes" | "-y" => skip_confirm = true,
-                "--path" => {
+                "--path" | "-p" => {
                     i += 1;
                     if i < args.len() {
                         target_path = Some(PathBuf::from(&args[i]));

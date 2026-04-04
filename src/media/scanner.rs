@@ -108,7 +108,7 @@ pub fn scan_media(target: &Path) -> io::Result<ScanReport> {
         }
     }
 
-    let total_size = files.iter().map(|e| e.size).sum();
+    let total_size = images.total_size + videos.total_size + audio.total_size + documents.total_size;
     let total_files = files.len();
     let contact_breakdown = db::get_contact_breakdown(target, &files).unwrap_or_default();
 

@@ -24,7 +24,19 @@ pub fn remove_empty_dirs(dir: &Path) -> std::io::Result<()> {
 
 /// Kills the WhatsApp process and re-launches it so that it re-reads the
 /// updated database. A two-second delay is inserted between the two steps.
+/// Does nothing if WhatsApp is not currently running.
 pub fn restart_whatsapp() {
+    // Check if WhatsApp is running before attempting to kill/relaunch it.
+    let running = std::process::Command::new("pgrep")
+        .args(["-x", "WhatsApp"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !running {
+        return;
+    }
+
     let _ = std::process::Command::new("pkill")
         .args(["-x", "WhatsApp"])
         .status();
@@ -39,7 +51,15 @@ pub fn restart_whatsapp() {
 /// writes in a single transaction), repairs orphaned DB records, clears the
 /// media disk-cache plist, and restarts WhatsApp when the DB was successfully
 /// updated.
+///
+/// If a WhatsApp database is found but the transaction cannot be committed,
+/// the function returns early **without** deleting any files so that the DB
+/// and the filesystem stay consistent.
 pub fn clean_media(target: &Path, files: &[MediaEntry]) -> CleanOutcome {
+    // `message_dir` is the parent of `Media/` — the same base used by
+    // `db::relative_db_path` and by WhatsApp's stored paths.
+    let message_dir = target.parent().unwrap_or(target);
+
     // Open the database for writing if it is available.
     let conn: Option<Connection> = match db::get_db_path(target) {
         Some(db_path) if db_path.exists() => match Connection::open(&db_path) {
@@ -52,12 +72,12 @@ pub fn clean_media(target: &Path, files: &[MediaEntry]) -> CleanOutcome {
         _ => None,
     };
 
+    let db_present = conn.is_some();
     let mut repaired_orphans = 0usize;
 
-    let db_updated = if let Some(ref connection) = conn {
-        let message_dir = target.parent().unwrap_or(target);
-
+    if let Some(ref connection) = conn {
         // Repair orphaned records (DB rows pointing to files that no longer exist).
+        // Paths are stored relative to `message_dir`, consistent with `relative_db_path`.
         if let Ok(mut stmt) = connection.prepare(
             "SELECT Z_PK, ZMEDIALOCALPATH FROM ZWAMEDIAITEM WHERE ZMEDIALOCALPATH IS NOT NULL",
         ) {
@@ -88,11 +108,25 @@ pub fn clean_media(target: &Path, files: &[MediaEntry]) -> CleanOutcome {
                 );
             }
         }
+    }
 
-        connection.execute_batch("COMMIT").is_ok()
-    } else {
-        false
-    };
+    // Commit the transaction. If the DB was present but the commit fails,
+    // bail out **before** touching the filesystem so the two stay in sync.
+    let db_updated = conn
+        .as_ref()
+        .map(|c| c.execute_batch("COMMIT").is_ok())
+        .unwrap_or(false);
+
+    if db_present && !db_updated {
+        return CleanOutcome {
+            deleted_files: 0,
+            total_files: files.len(),
+            freed_bytes: 0,
+            errors: 0,
+            repaired_orphans,
+            db_updated: false,
+        };
+    }
 
     // Delete files from disk.
     let mut freed_bytes = 0u64;

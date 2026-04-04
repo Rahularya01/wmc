@@ -98,6 +98,7 @@ pub fn get_contact_breakdown(target: &Path, files: &[MediaEntry]) -> Option<Vec<
     let mut contact_map: HashMap<String, ContactBreakdown> = HashMap::new();
     let mut other_count = 0usize;
     let mut other_size = 0u64;
+    let mut other_files: Vec<MediaEntry> = Vec::new();
 
     for entry in files {
         let label = relative_db_path(target, &entry.path)
@@ -122,6 +123,7 @@ pub fn get_contact_breakdown(target: &Path, files: &[MediaEntry]) -> Option<Vec<
             None => {
                 other_count += 1;
                 other_size += entry.size;
+                other_files.push(entry.clone());
             }
         }
     }
@@ -134,16 +136,7 @@ pub fn get_contact_breakdown(target: &Path, files: &[MediaEntry]) -> Option<Vec<
             label: "Other".to_string(),
             file_count: other_count,
             total_size: other_size,
-            files: files
-                .iter()
-                .filter(|e| {
-                    relative_db_path(target, &e.path)
-                        .as_deref()
-                        .and_then(|rel| path_to_contact.get(rel))
-                        .is_none()
-                })
-                .cloned()
-                .collect(),
+            files: other_files,
         });
     }
 

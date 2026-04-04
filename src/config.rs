@@ -4,7 +4,8 @@ pub const MAX_CONTACTS: usize = 8;
 pub const MAX_FILES: usize = 10;
 
 /// File extensions that are WhatsApp internal files and should never be deleted.
-pub const IGNORED_EXTENSIONS: &[&str] = &["thumb"];
+/// Includes thumbnail caches, SQLite journal files, and Android media markers.
+pub const IGNORED_EXTENSIONS: &[&str] = &["thumb", "db", "db-shm", "db-wal", "nomedia"];
 
 pub const IMAGE_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif", "tiff", "tif",

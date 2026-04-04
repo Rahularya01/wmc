@@ -1,20 +1,22 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver};
 
 use tuirealm::command::{Cmd, CmdResult};
 use tuirealm::event::{Key, KeyEvent, KeyModifiers};
 use tuirealm::props::{AttrValue, Attribute, Props};
 use tuirealm::ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 use tuirealm::{Component, Event, Frame, MockComponent, NoUserEvent, State};
 
-use crate::media::{clean_media, scan_media};
+use crate::media::{clean_media, scan_media, CleanOutcome, MediaEntry};
 use crate::utils::format_bytes;
 
+use super::layout::centered_rect;
 use super::types::{ACTIONS, AppMsg, UiAction};
 
 // ── Modes ─────────────────────────────────────────────────────────────────────
@@ -48,8 +50,12 @@ pub struct Dashboard {
 
     // Action list state
     selected_action: usize,
+    /// First-press confirmation guard for the Actions pane Clean action.
     confirm_clean: bool,
-    pending_clean: bool,
+    /// Separate first-press guard used when Enter is pressed in the Contacts pane.
+    confirm_contacts_clean: bool,
+    /// Receiver for the background clean thread result (Some = clean in flight).
+    clean_receiver: Option<Receiver<CleanOutcome>>,
     pending_restart: bool,
     /// Defaults to `true` (Yes) for the restart interactive popup.
     restart_selection: bool,
@@ -69,7 +75,8 @@ impl Dashboard {
             contact_cursor: 0,
             selected_action: 0,
             confirm_clean: false,
-            pending_clean: false,
+            confirm_contacts_clean: false,
+            clean_receiver: None,
             pending_restart: false,
             restart_selection: true,
             focus: Focus::Contacts,
@@ -102,7 +109,7 @@ impl Dashboard {
 
     /// Files that belong to the current contact selection, used for
     /// preview/clean operations.
-    fn files_for_selection(&self) -> Vec<crate::media::MediaEntry> {
+    fn files_for_selection(&self) -> Vec<MediaEntry> {
         let Some(report) = &self.report else {
             return vec![];
         };
@@ -112,7 +119,6 @@ impl Dashboard {
         }
 
         // Filter files to those attributed to a selected contact.
-        // We use the `files` array now stored directly on each `ContactBreakdown`.
         let mut result = Vec::new();
         for cb in &report.contact_breakdown {
             if self.selected_contacts.contains(&cb.label) {
@@ -143,10 +149,16 @@ impl Dashboard {
         self.selected_contacts.retain(|s| valid.contains(s));
     }
 
+    /// Returns `true` when a clean operation is in progress on the background thread.
+    fn is_cleaning(&self) -> bool {
+        self.clean_receiver.is_some()
+    }
+
     // ── Actions ───────────────────────────────────────────────────────────────
 
     pub fn refresh(&mut self) {
         self.confirm_clean = false;
+        self.confirm_contacts_clean = false;
         match scan_media(&self.target) {
             Ok(report) => {
                 self.status = if report.total_files == 0 {
@@ -170,6 +182,7 @@ impl Dashboard {
 
     pub fn preview(&mut self) {
         self.confirm_clean = false;
+        self.confirm_contacts_clean = false;
         self.pending_restart = false;
         let (count, size) = self.size_for_selection();
         if count == 0 {
@@ -182,6 +195,31 @@ impl Dashboard {
                 self.selection_summary()
             );
         }
+    }
+
+    /// Starts a background thread to delete `files`. The popup will show while
+    /// the thread runs; the Tick handler collects the result.
+    fn start_clean(&mut self, files: Vec<MediaEntry>) {
+        if files.is_empty() {
+            self.status = "Nothing to delete.".to_string();
+            return;
+        }
+        let (count, size_bytes) = {
+            let size: u64 = files.iter().map(|f| f.size).sum();
+            (files.len(), size)
+        };
+        self.status = format!(
+            "Deleting {} file(s) ({})… please wait.",
+            count,
+            format_bytes(size_bytes)
+        );
+        let target = self.target.clone();
+        let (tx, rx) = mpsc::channel::<CleanOutcome>();
+        self.clean_receiver = Some(rx);
+        std::thread::spawn(move || {
+            let outcome = clean_media(&target, &files);
+            let _ = tx.send(outcome);
+        });
     }
 
     pub fn run_selected_action(&mut self) {
@@ -205,11 +243,22 @@ impl Dashboard {
                     );
                     return;
                 }
-
-                let outcome = clean_media(&self.target, &files);
                 self.confirm_clean = false;
+                self.start_clean(files);
+            }
+        }
+    }
+
+    /// Called on every Tick to collect a finished background clean result.
+    fn poll_clean_result(&mut self) -> bool {
+        let Some(rx) = &self.clean_receiver else {
+            return false;
+        };
+        match rx.try_recv() {
+            Ok(outcome) => {
+                self.clean_receiver = None;
                 self.status = format!(
-                    "Deleted {}/{} file(s), freed {}{}{}",
+                    "Deleted {}/{} file(s), freed {}{}{}\u{200B}",
                     outcome.deleted_files,
                     outcome.total_files,
                     format_bytes(outcome.freed_bytes),
@@ -222,17 +271,25 @@ impl Dashboard {
                         format!(", {} delete errors", outcome.errors)
                     } else {
                         String::new()
-                    }
+                    },
                 );
                 self.refresh();
                 if outcome.db_updated {
                     self.pending_restart = true;
                     self.restart_selection = true;
-                } else {
+                } else if outcome.total_files > 0 {
                     self.status.push_str(
                         " — Database update skipped. Close WhatsApp if references look stale.",
                     );
                 }
+                true
+            }
+            Err(mpsc::TryRecvError::Empty) => false,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                // Thread panicked or was otherwise lost.
+                self.clean_receiver = None;
+                self.status = "Clean operation failed unexpectedly.".to_string();
+                true
             }
         }
     }
@@ -448,27 +505,10 @@ impl Dashboard {
     }
 
     fn draw_deleting_popup(&self, frame: &mut Frame, area: Rect) {
-        let popup_area = {
-            let vert = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Percentage(40),
-                    Constraint::Length(5),
-                    Constraint::Percentage(40),
-                ])
-                .split(area);
-            Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(30),
-                    Constraint::Percentage(40),
-                    Constraint::Percentage(30),
-                ])
-                .split(vert[1])[1]
-        };
+        let popup_area = centered_rect(40, 30, area);
 
         let (count, _) = self.size_for_selection();
-        let text = format!("Deleting {} file(s)...\n\nPlease wait.", count);
+        let text = format!("Deleting {} file(s)…\n\nPlease wait.", count);
 
         let popup = Paragraph::new(text)
             .block(
@@ -485,24 +525,7 @@ impl Dashboard {
     }
 
     fn draw_restart_popup(&self, frame: &mut Frame, area: Rect) {
-        let popup_area = {
-            let vert = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Percentage(35),
-                    Constraint::Length(7),
-                    Constraint::Percentage(35),
-                ])
-                .split(area);
-            Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(25),
-                    Constraint::Percentage(50),
-                    Constraint::Percentage(25),
-                ])
-                .split(vert[1])[1]
-        };
+        let popup_area = centered_rect(50, 40, area);
 
         let active_style = Style::default().fg(Color::Black).bg(Color::Cyan);
         let inactive_style = Style::default().fg(Color::DarkGray);
@@ -546,24 +569,7 @@ impl Dashboard {
     }
 
     fn draw_error_popup(&self, frame: &mut Frame, area: Rect) {
-        let popup_area = {
-            let vert = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Percentage(40),
-                    Constraint::Length(5),
-                    Constraint::Percentage(40),
-                ])
-                .split(area);
-            Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(15),
-                    Constraint::Percentage(70),
-                    Constraint::Percentage(15),
-                ])
-                .split(vert[1])[1]
-        };
+        let popup_area = centered_rect(70, 30, area);
 
         let popup = Paragraph::new("Unable to scan WhatsApp media. Make sure WhatsApp is installed and the path is correct.")
             .block(
@@ -576,12 +582,39 @@ impl Dashboard {
         frame.render_widget(Clear, popup_area);
         frame.render_widget(popup, popup_area);
     }
+
+    fn draw_confirm_contacts_popup(&self, frame: &mut Frame, area: Rect) {
+        let popup_area = centered_rect(50, 30, area);
+
+        let (count, size) = self.size_for_selection();
+        let text = format!(
+            "Delete {} file(s) totalling {}?\n\n({})\n\nPress Enter to confirm, Esc to cancel.",
+            count,
+            format_bytes(size),
+            self.selection_summary()
+        );
+
+        let popup = Paragraph::new(text)
+            .block(
+                Block::default()
+                    .title(" Confirm Delete ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::LightRed)),
+            )
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+
+        frame.render_widget(Clear, popup_area);
+        frame.render_widget(popup, popup_area);
+    }
 }
 
 // ── tuirealm trait implementations ───────────────────────────────────────────
 
 impl MockComponent for Dashboard {
     fn view(&mut self, frame: &mut Frame, area: Rect) {
+        use tuirealm::ratatui::layout::{Constraint, Direction, Layout};
+
         // Outer layout: header / body / status
         let outer = Layout::default()
             .direction(Direction::Vertical)
@@ -605,12 +638,15 @@ impl MockComponent for Dashboard {
 
         self.draw_status(frame, outer[2]);
 
+        // Overlay popups (mutually exclusive, priority order matters).
         if self.report.is_none() {
             self.draw_error_popup(frame, area);
-        } else if self.pending_clean {
+        } else if self.is_cleaning() {
             self.draw_deleting_popup(frame, area);
         } else if self.pending_restart {
             self.draw_restart_popup(frame, area);
+        } else if self.confirm_contacts_clean {
+            self.draw_confirm_contacts_popup(frame, area);
         }
     }
 
@@ -633,6 +669,7 @@ impl MockComponent for Dashboard {
 
 impl Component<AppMsg, NoUserEvent> for Dashboard {
     fn on(&mut self, event: Event<NoUserEvent>) -> Option<AppMsg> {
+        // ── While the restart popup is shown ──────────────────────────────────
         if self.pending_restart {
             return match event {
                 // Confirm selection
@@ -690,6 +727,46 @@ impl Component<AppMsg, NoUserEvent> for Dashboard {
                     self.pending_restart = false;
                     self.status = "WhatsApp restart skipped.".to_string();
                     Some(AppMsg::Redraw)
+                }
+                Event::WindowResize(_, _) => Some(AppMsg::Redraw),
+                _ => None,
+            };
+        }
+
+        // ── While the Contacts-pane delete confirmation popup is shown ────────
+        if self.confirm_contacts_clean {
+            return match event {
+                Event::Keyboard(KeyEvent {
+                    code: Key::Enter, ..
+                }) => {
+                    self.confirm_contacts_clean = false;
+                    let files = self.files_for_selection();
+                    self.start_clean(files);
+                    Some(AppMsg::Redraw)
+                }
+                Event::Keyboard(KeyEvent { code: Key::Esc, .. })
+                | Event::Keyboard(KeyEvent {
+                    code: Key::Char('q'),
+                    ..
+                }) => {
+                    self.confirm_contacts_clean = false;
+                    self.status = "Delete cancelled.".to_string();
+                    Some(AppMsg::Redraw)
+                }
+                Event::WindowResize(_, _) => Some(AppMsg::Redraw),
+                _ => None,
+            };
+        }
+
+        // ── Block all input while a clean is running ──────────────────────────
+        if self.is_cleaning() {
+            return match event {
+                Event::Tick => {
+                    if self.poll_clean_result() {
+                        Some(AppMsg::Redraw)
+                    } else {
+                        None
+                    }
                 }
                 Event::WindowResize(_, _) => Some(AppMsg::Redraw),
                 _ => None,
@@ -773,16 +850,16 @@ impl Component<AppMsg, NoUserEvent> for Dashboard {
                 Some(AppMsg::Redraw)
             }
 
-            // Enter — run selected action (Actions pane); or switch to Actions
+            // Enter — run selected action (Actions pane);
+            //         or show confirmation popup (Contacts pane).
             Event::Keyboard(KeyEvent {
                 code: Key::Enter, ..
             }) => {
                 if self.focus == Focus::Contacts {
-                    // Auto-delete the selected contacts
+                    // Show a dedicated confirmation popup before deleting.
                     let (count, _) = self.size_for_selection();
                     if count > 0 {
-                        self.status = format!("Deleting {} file(s)... Please wait.", count);
-                        self.pending_clean = true;
+                        self.confirm_contacts_clean = true;
                     } else {
                         self.status = "Nothing to delete.".to_string();
                     }
@@ -792,13 +869,9 @@ impl Component<AppMsg, NoUserEvent> for Dashboard {
                 Some(AppMsg::Redraw)
             }
 
-            // Tick — process background state changes like pending clean
+            // Tick — poll for completed background clean
             Event::Tick => {
-                if self.pending_clean {
-                    self.pending_clean = false;
-                    self.selected_action = 2; // UiAction::Clean
-                    self.confirm_clean = true; // Auto-confirm
-                    self.run_selected_action();
+                if self.poll_clean_result() {
                     Some(AppMsg::Redraw)
                 } else {
                     None
