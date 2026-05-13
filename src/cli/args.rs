@@ -1,83 +1,46 @@
 use std::path::PathBuf;
 
+use clap::{Args, Parser};
+
 use crate::config::default_media_path;
 
-/// Which top-level command the user requested.
-pub enum Subcommand {
-    /// Launch the interactive TUI (default when no subcommand is given).
-    Ui,
-    /// Print a media usage report to stdout.
-    Analyze,
-    /// Delete media files from disk and update the WhatsApp database.
-    Clean { skip_confirm: bool, dry_run: bool },
-}
-
-/// Parsed command-line arguments.
+/// WhatsApp Media Cleaner
+#[derive(Parser)]
+#[command(name = "wmc")]
+#[command(about = "CLI to clean downloaded WhatsApp media on macOS")]
+#[command(version)]
 pub struct CliArgs {
-    pub subcommand: Subcommand,
-    pub target: PathBuf,
+    #[command(subcommand)]
+    pub subcommand: Option<Subcommand>,
+
+    /// Override the target media directory
+    #[arg(short, long)]
+    pub path: Option<PathBuf>,
 }
 
 impl CliArgs {
-    /// Parses `std::env::args()` and exits the process with an error message on
-    /// invalid input.
-    ///
-    /// Flags (`--dry-run`, `--yes`, `--path`) may appear in any order relative
-    /// to the subcommand keyword.
-    pub fn parse() -> Self {
-        let args: Vec<String> = std::env::args().collect();
-
-        let mut subcommand: Option<String> = None;
-        let mut dry_run = false;
-        let mut skip_confirm = false;
-        let mut target_path: Option<PathBuf> = None;
-        let mut i = 1;
-
-        while i < args.len() {
-            match args[i].as_str() {
-                "ui" | "analyze" | "clean" => subcommand = Some(args[i].clone()),
-                "--dry-run" | "-n" => dry_run = true,
-                "--yes" | "-y" => skip_confirm = true,
-                "--path" | "-p" => {
-                    i += 1;
-                    if i < args.len() {
-                        target_path = Some(PathBuf::from(&args[i]));
-                    } else {
-                        eprintln!("Error: --path requires an argument");
-                        std::process::exit(1);
-                    }
-                }
-                "--help" | "-h" => {
-                    super::commands::print_help();
-                    std::process::exit(0);
-                }
-                other => {
-                    eprintln!("Unknown argument: {}\nRun `wmc --help` for usage.", other);
-                    std::process::exit(1);
-                }
-            }
-            i += 1;
-        }
-
-        let target = target_path.unwrap_or_else(default_media_path);
-        if !target.exists() {
-            eprintln!(
-                "Error: target directory does not exist: {}",
-                target.display()
-            );
-            std::process::exit(1);
-        }
-
-        let subcommand = match subcommand.as_deref() {
-            Some("analyze") => Subcommand::Analyze,
-            Some("clean") => Subcommand::Clean {
-                skip_confirm,
-                dry_run,
-            },
-            Some("ui") | None => Subcommand::Ui,
-            _ => unreachable!(),
-        };
-
-        CliArgs { subcommand, target }
+    /// Returns the effective target path (explicit `--path` or default).
+    pub fn target(&self) -> PathBuf {
+        self.path.clone().unwrap_or_else(default_media_path)
     }
+}
+
+#[derive(clap::Subcommand)]
+pub enum Subcommand {
+    /// Open the interactive terminal UI (default)
+    Ui,
+    /// Show how much storage WhatsApp media is using
+    Analyze,
+    /// Delete WhatsApp media and free up storage
+    Clean(CleanArgs),
+}
+
+#[derive(Args)]
+pub struct CleanArgs {
+    /// Skip confirmation prompt
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+    /// Preview what would be deleted without deleting
+    #[arg(short = 'n', long)]
+    pub dry_run: bool,
 }

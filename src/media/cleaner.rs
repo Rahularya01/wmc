@@ -1,4 +1,5 @@
 use std::fs;
+use std::io;
 use std::path::Path;
 use std::time::Duration;
 
@@ -10,13 +11,24 @@ use crate::db;
 use super::types::{CleanOutcome, MediaEntry};
 
 /// Recursively removes empty directories under `dir`.
-pub fn remove_empty_dirs(dir: &Path) -> std::io::Result<()> {
+///
+/// Symbolic links are skipped to prevent traversing outside the target tree.
+pub fn remove_empty_dirs(dir: &Path) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if entry.metadata()?.is_dir() {
-            remove_empty_dirs(&path)?;
-            let _ = fs::remove_dir(&path);
+        let meta = fs::symlink_metadata(&path)?;
+
+        if meta.is_symlink() || !meta.is_dir() {
+            continue;
+        }
+
+        remove_empty_dirs(&path)?;
+
+        match fs::remove_dir(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::DirectoryNotEmpty => {}
+            Err(e) => return Err(e),
         }
     }
     Ok(())
@@ -49,8 +61,10 @@ pub fn restart_whatsapp() {
 /// Deletes every file in `files`, NULLs the corresponding
 /// `ZMEDIALOCALPATH` rows in the WhatsApp SQLite database (wrapping all DB
 /// writes in a single transaction), repairs orphaned DB records, clears the
-/// media disk-cache plist, and restarts WhatsApp when the DB was successfully
-/// updated.
+/// media disk-cache plist, and returns the outcome.
+///
+/// **Note:** This function does **not** restart WhatsApp. Callers should
+/// invoke [`restart_whatsapp`] afterwards if the database was updated.
 ///
 /// If a WhatsApp database is found but the transaction cannot be committed,
 /// the function returns early **without** deleting any files so that the DB
@@ -74,6 +88,7 @@ pub fn clean_media(target: &Path, files: &[MediaEntry]) -> CleanOutcome {
 
     let db_present = conn.is_some();
     let mut repaired_orphans = 0usize;
+    let mut db_errors = 0usize;
 
     if let Some(ref connection) = conn {
         // Repair orphaned records (DB rows pointing to files that no longer exist).
@@ -92,20 +107,30 @@ pub fn clean_media(target: &Path, files: &[MediaEntry]) -> CleanOutcome {
 
             repaired_orphans = orphans.len();
             for (pk, _) in &orphans {
-                let _ = connection.execute(
-                    "UPDATE ZWAMEDIAITEM SET ZMEDIALOCALPATH = NULL WHERE Z_PK = ?1",
-                    params![pk],
-                );
+                if connection
+                    .execute(
+                        "UPDATE ZWAMEDIAITEM SET ZMEDIALOCALPATH = NULL WHERE Z_PK = ?1",
+                        params![pk],
+                    )
+                    .is_err()
+                {
+                    db_errors += 1;
+                }
             }
         }
 
         // NULL the path for every file we are about to delete.
         for entry in files {
             if let Some(relative) = db::relative_db_path(target, &entry.path) {
-                let _ = connection.execute(
-                    "UPDATE ZWAMEDIAITEM SET ZMEDIALOCALPATH = NULL WHERE ZMEDIALOCALPATH = ?1",
-                    params![relative],
-                );
+                if connection
+                    .execute(
+                        "UPDATE ZWAMEDIAITEM SET ZMEDIALOCALPATH = NULL WHERE ZMEDIALOCALPATH = ?1",
+                        params![relative],
+                    )
+                    .is_err()
+                {
+                    db_errors += 1;
+                }
             }
         }
     }
@@ -125,6 +150,7 @@ pub fn clean_media(target: &Path, files: &[MediaEntry]) -> CleanOutcome {
             errors: 0,
             repaired_orphans,
             db_updated: false,
+            db_errors,
         };
     }
 
@@ -154,5 +180,6 @@ pub fn clean_media(target: &Path, files: &[MediaEntry]) -> CleanOutcome {
         errors,
         repaired_orphans,
         db_updated,
+        db_errors,
     }
 }

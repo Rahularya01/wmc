@@ -118,7 +118,7 @@ jobs:
             end
 
             test do
-              assert_match "USAGE:", shell_output("#{bin}/wmc --help")
+              assert_match "Usage:", shell_output("#{bin}/wmc --help")
             end
           end
           EOF

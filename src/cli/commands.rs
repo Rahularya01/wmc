@@ -1,27 +1,10 @@
 use std::io::{self, Write};
 use std::path::Path;
 
+use crate::media::cleaner::restart_whatsapp;
 use crate::media::types::{ContactBreakdown, ScanReport};
 use crate::media::{clean_media, scan_media};
 use crate::utils::format_bytes;
-
-// ── Help text ─────────────────────────────────────────────────────────────────
-
-pub fn print_help() {
-    println!("wmc - WhatsApp Media Cleaner\n");
-    println!("USAGE:");
-    println!("  wmc [ui] [OPTIONS]");
-    println!("  wmc <COMMAND> [OPTIONS]\n");
-    println!("COMMANDS:");
-    println!("  ui               Open the interactive terminal UI");
-    println!("  analyze          Show how much storage WhatsApp media is using");
-    println!("  clean            Delete WhatsApp media and free up storage");
-    println!("  clean --dry-run  Preview what would be deleted without deleting\n");
-    println!("OPTIONS:");
-    println!("  -y, --yes        Skip confirmation prompt (use with clean)");
-    println!("  --path <DIR>     Override the target media directory");
-    println!("  -h, --help       Show this help message");
-}
 
 // ── Shared report printing ────────────────────────────────────────────────────
 
@@ -65,7 +48,7 @@ pub fn print_report(target: &Path, report: &ScanReport) {
         return;
     }
 
-    for category in &report.categories {
+    for category in report.categories.iter() {
         println!(
             "  {:<6} {:>6} file(s)   {}",
             category.label,
@@ -162,7 +145,14 @@ pub fn cmd_clean(target: &Path, skip_confirm: bool, dry_run: bool) {
             outcome.repaired_orphans
         );
     }
+    if outcome.db_errors > 0 {
+        println!("{} database update error(s) occurred.", outcome.db_errors);
+    }
     if !outcome.db_updated {
         println!("Database was not updated. Close WhatsApp and retry if media appears corrupted.");
+    } else {
+        println!("Restarting WhatsApp to reflect database changes...");
+        restart_whatsapp();
+        println!("WhatsApp restarted.");
     }
 }

@@ -13,7 +13,7 @@ use tuirealm::ratatui::{
 };
 use tuirealm::{Component, Event, Frame, MockComponent, NoUserEvent, State};
 
-use crate::media::{clean_media, scan_media, CleanOutcome, MediaEntry};
+use crate::media::{CleanOutcome, MediaEntry, clean_media, scan_media};
 use crate::utils::format_bytes;
 
 use super::layout::centered_rect;
